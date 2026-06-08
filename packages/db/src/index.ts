@@ -10,5 +10,6 @@
 
 export * as dynamo from "./dynamo.js";
 export * as aurora from "./aurora.js";
+export * as repo from "./repo.js";
 export { PairUnavailableError } from "./dynamo.js";
 export { dynamoConfig, auroraConfig, awsConfig } from "./env.js";

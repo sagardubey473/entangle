@@ -9,6 +9,7 @@
 import {
   RDSDataClient,
   ExecuteStatementCommand,
+  BatchExecuteStatementCommand,
   type SqlParameter,
 } from "@aws-sdk/client-rds-data";
 import { awsConfig, auroraConfig } from "./env.js";
@@ -49,6 +50,27 @@ export async function query<T = Record<string, unknown>>(
   );
   if (!res.formattedRecords) return [];
   return JSON.parse(res.formattedRecords) as T[];
+}
+
+/**
+ * Execute one statement repeatedly with many parameter sets in a single call.
+ * Ideal for flushing batched event/live_link writes from the engine without one
+ * round-trip per row. No-op for an empty set.
+ */
+export async function batchExec(
+  sql: string,
+  parameterSets: SqlParameter[][],
+): Promise<void> {
+  if (parameterSets.length === 0) return;
+  await client.send(
+    new BatchExecuteStatementCommand({
+      resourceArn: auroraConfig.clusterArn,
+      secretArn: auroraConfig.secretArn,
+      database: auroraConfig.database,
+      sql,
+      parameterSets,
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
