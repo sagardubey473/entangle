@@ -32,6 +32,7 @@ async function main(): Promise<void> {
   let lastNow = Date.now();
   let lastEvents = 0;
   let lastLiveLinks = 0;
+  let lastRouting = 0;
   let lastMetrics = 0;
   let lastControls = 0;
 
@@ -53,13 +54,17 @@ async function main(): Promise<void> {
       }
 
       // Cadenced side-effects.
-      if (now - lastEvents >= cadences.events) {
-        await engine.flushEvents();
-        lastEvents = now;
-      }
       if (now - lastLiveLinks >= cadences.liveLinks) {
         await repo.flushLiveLinks(engine.computeLiveLinks(now));
         lastLiveLinks = now;
+      }
+      if (!engine.controls.paused && now - lastRouting >= cadences.routing) {
+        await engine.routeRequests(now);
+        lastRouting = now;
+      }
+      if (now - lastEvents >= cadences.events) {
+        await engine.flushEvents();
+        lastEvents = now;
       }
       if (now - lastMetrics >= cadences.metrics) {
         await repo.insertMetrics(engine.buildMetrics(now));

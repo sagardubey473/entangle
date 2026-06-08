@@ -19,8 +19,11 @@ import {
   currentFidelity,
   expiresAtSeconds,
   endpointsKey,
+  findBestRoute,
   DEFAULT_SIM_CONTROLS,
+  DEFAULT_DEADLINE_MS,
   type EntangledPair,
+  type ConnectionRequest,
   type MetricsSnapshot,
   type NetworkEvent,
   type StateResponse,
@@ -38,6 +41,9 @@ class DemoSim {
   private pairs = new Map<string, EntangledPair>();
   private events: NetworkEvent[] = [];
   private metrics: MetricsSnapshot[] = [];
+  private requests: ConnectionRequest[] = [];
+  private lastFulfilledPath: string[] = [];
+  private lastFulfilledAt = 0;
   controls: SimControls = { ...DEFAULT_SIM_CONTROLS };
 
   private lastTick = Date.now();
@@ -45,6 +51,7 @@ class DemoSim {
   private generatedTotal = 0;
   private fulfilledTotal = 0;
   private failedTotal = 0;
+  private deliveredSum = 0;
 
   /** Advance the simulation up to `now`, in fixed steps (capped catch-up). */
   private advance(now: number): void {
@@ -54,6 +61,7 @@ class DemoSim {
       if (!this.controls.paused) {
         this.generate(t);
         this.expire(t);
+        this.route(t);
       }
       if (t - this.lastMetricAt >= 1000) {
         this.snapshot(t);
@@ -121,16 +129,139 @@ class DemoSim {
 
   private snapshot(now: number): void {
     const live = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE").length;
+    const avgDelivered =
+      this.fulfilledTotal > 0 ? this.deliveredSum / this.fulfilledTotal : 0;
     this.metrics.push({
       ts: now,
       generated_total: this.generatedTotal,
       fulfilled_total: this.fulfilledTotal,
       failed_total: this.failedTotal,
-      avg_delivered_fidelity: 0,
+      avg_delivered_fidelity: Number(avgDelivered.toFixed(4)),
       live_pair_count: live,
       utilization: Number(Math.min(1, (2 * live) / TOTAL_SLOTS).toFixed(4)),
     });
     if (this.metrics.length > MAX_METRICS) this.metrics.splice(0, this.metrics.length - MAX_METRICS);
+  }
+
+  /** Best AVAILABLE pair between two nodes (highest current fidelity). */
+  private bestPair(a: string, b: string, now: number): EntangledPair | null {
+    const key = endpointsKey(a, b);
+    let best: EntangledPair | null = null;
+    let bestF = 0;
+    for (const p of this.pairs.values()) {
+      if (p.status !== "AVAILABLE" || p.endpoints !== key) continue;
+      const f = currentFidelity(p.initial_fidelity, p.decay_rate, p.created_at, now);
+      if (f > bestF) {
+        bestF = f;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  /** Process PENDING requests: route via findBestRoute, then swap + fulfill. */
+  private route(now: number): void {
+    for (const req of this.requests) {
+      if (req.status !== "PENDING") continue;
+      if (now > req.created_at + req.deadline_ms) {
+        req.status = "FAILED";
+        this.failedTotal++;
+        this.pushEvent({
+          event_id: ulid(),
+          ts: now,
+          type: "FAILED",
+          pair_id: null,
+          request_id: req.request_id,
+          payload: { reason: "deadline exceeded" },
+        });
+        continue;
+      }
+      const route = findBestRoute(this.linkViews(now), req.src_node, req.dst_node, req.min_fidelity);
+      if (!route) continue;
+
+      // Pick the best pair per hop; bail if any hop's inventory vanished.
+      const hopPairs: EntangledPair[] = [];
+      let ok = true;
+      for (let i = 0; i < route.path.length - 1; i++) {
+        const p = this.bestPair(route.path[i]!, route.path[i + 1]!, now);
+        if (!p) { ok = false; break; }
+        hopPairs.push(p);
+      }
+      if (!ok) continue;
+
+      const product = hopPairs.reduce(
+        (acc, p) => acc * currentFidelity(p.initial_fidelity, p.decay_rate, p.created_at, now),
+        1,
+      );
+      if (product < req.min_fidelity) continue;
+
+      // Swap: consume hop pairs, emit events, deliver end-to-end.
+      for (const p of hopPairs) {
+        this.pairs.delete(p.pair_id);
+        this.pushEvent({
+          event_id: ulid(),
+          ts: now,
+          type: "CONSUMED",
+          pair_id: p.pair_id,
+          request_id: req.request_id,
+          payload: { link_id: p.link_id },
+        });
+      }
+      for (let i = 1; i < route.path.length - 1; i++) {
+        this.pushEvent({
+          event_id: ulid(),
+          ts: now,
+          type: "SWAPPED",
+          pair_id: null,
+          request_id: req.request_id,
+          payload: { at: route.path[i] },
+        });
+      }
+      const delivered = Number(product.toFixed(4));
+      req.status = "FULFILLED";
+      req.path = route.path;
+      req.delivered_fidelity = delivered;
+      req.fulfilled_at = now;
+      this.fulfilledTotal++;
+      this.deliveredSum += delivered;
+      this.lastFulfilledPath = route.path;
+      this.lastFulfilledAt = now;
+      this.pushEvent({
+        event_id: ulid(),
+        ts: now,
+        type: "FULFILLED",
+        pair_id: null,
+        request_id: req.request_id,
+        payload: { path: route.path, delivered_fidelity: delivered, hops: route.hops },
+      });
+    }
+    // Keep the requests list bounded.
+    if (this.requests.length > 100) this.requests.splice(0, this.requests.length - 100);
+  }
+
+  /** Create a PENDING request (called by /api/request in demo mode). */
+  createRequest(body: {
+    src: string;
+    dst: string;
+    min_fidelity: number;
+    deadline_ms?: number;
+  }): ConnectionRequest {
+    const now = Date.now();
+    this.advance(now);
+    const req: ConnectionRequest = {
+      request_id: ulid(),
+      src_node: body.src,
+      dst_node: body.dst,
+      min_fidelity: body.min_fidelity,
+      deadline_ms: body.deadline_ms ?? DEFAULT_DEADLINE_MS,
+      status: "PENDING",
+      created_at: now,
+      fulfilled_at: null,
+      path: null,
+      delivered_fidelity: null,
+    };
+    this.requests.push(req);
+    return req;
   }
 
   /** Undirected per-edge link view with the best current fidelity. */
@@ -160,14 +291,17 @@ class DemoSim {
     const now = Date.now();
     this.advance(now);
     const livePairs = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE");
+    const ACTIVE_PATH_WINDOW_MS = 6000;
+    const activePath =
+      now - this.lastFulfilledAt <= ACTIVE_PATH_WINDOW_MS ? this.lastFulfilledPath : [];
     return {
       nodes: NODES,
       links: this.linkViews(now),
       livePairs,
-      activeRequests: [],
+      activeRequests: [...this.requests].slice(-25).reverse(),
       recentEvents: [...this.events].slice(-40).reverse(),
       metrics: [...this.metrics],
-      activePath: [],
+      activePath,
       controls: this.controls,
     };
   }

@@ -1,5 +1,7 @@
-import { Activity, Radio, Zap } from "lucide-react";
+import { Radio, Zap } from "lucide-react";
 import { CorridorMapLive } from "@/components/corridor-map-live";
+import { RequestForm } from "@/components/request-form";
+import { LivePanels } from "@/components/live-panels";
 
 export default function Home() {
   return (
@@ -33,6 +35,9 @@ export default function Home() {
         <CorridorMapLive />
 
         <aside className="flex flex-col gap-4">
+          <RequestForm />
+          <LivePanels />
+
           <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Radio className="h-4 w-4 text-accent" aria-hidden />
@@ -43,11 +48,7 @@ export default function Home() {
               extended down a plausible inter-city spine to Washington DC. We
               model this testbed — we do not connect to it.
             </p>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
-            <h2 className="text-sm font-semibold text-foreground">Legend</h2>
-            <div className="mt-3 space-y-3 text-xs text-muted">
+            <div className="mt-3 space-y-2 text-xs text-muted">
               <div>
                 <div className="mb-1 font-medium text-foreground">Link fidelity</div>
                 <div className="h-2 w-full rounded-full bg-gradient-to-r from-fidelity-low via-fidelity-mid to-fidelity-high" />
@@ -66,23 +67,7 @@ export default function Home() {
                   Repeater
                 </span>
               </div>
-              <p className="pt-1 leading-relaxed">
-                Arcs fade as pairs decohere; faint pulses trace high-fidelity
-                links. Pulsing halos mark the testbed core.
-              </p>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Activity className="h-4 w-4 text-accent" aria-hidden />
-              Coming online
-            </h2>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
-              Request routing, the no-cloning proof, dashboards, and controls
-              arrive in the next phases. The map already breathes as the live
-              inventory generates and decays.
-            </p>
           </div>
         </aside>
       </section>

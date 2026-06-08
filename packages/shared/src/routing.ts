@@ -68,3 +68,69 @@ export interface RouteResult {
   end_to_end_fidelity: number;
   hops: number;
 }
+
+/** Minimal edge shape for in-memory routing (matches LiveLinkView). */
+export interface RoutableEdge {
+  from: string;
+  to: string;
+  fidelity: number;
+  available_count?: number;
+}
+
+/**
+ * Pure, in-memory equivalent of {@link ROUTE_QUERY_SQL}: the maximum-product
+ * fidelity path from src to dst. Used by the demo simulator (which has no
+ * Aurora) and unit-tested so it stays in lockstep with the SQL semantics. The
+ * real engine uses the recursive CTE against live_links, per the spec.
+ *
+ * Treats edges as undirected, ignores edges without usable inventory, prunes any
+ * branch whose running product drops below minFidelity, forbids cycles, and caps
+ * the hop count. Returns the best route or null if none qualifies.
+ */
+export function findBestRoute(
+  edges: RoutableEdge[],
+  src: string,
+  dst: string,
+  minFidelity: number,
+  maxHops: number = MAX_HOPS,
+): RouteResult | null {
+  // Build an undirected adjacency list from edges that have usable inventory.
+  const adj = new Map<string, Array<{ to: string; fidelity: number }>>();
+  const add = (a: string, b: string, f: number) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a)!.push({ to: b, fidelity: f });
+  };
+  for (const e of edges) {
+    if (e.fidelity <= 0) continue;
+    if (e.available_count !== undefined && e.available_count <= 0) continue;
+    add(e.from, e.to, e.fidelity);
+    add(e.to, e.from, e.fidelity);
+  }
+
+  let best: RouteResult | null = null;
+  const visited = new Set<string>([src]);
+
+  const dfs = (node: string, path: string[], product: number) => {
+    if (product < minFidelity) return; // monotonic prune
+    if (node === dst) {
+      if (!best || product > best.end_to_end_fidelity) {
+        best = { path: [...path], end_to_end_fidelity: product, hops: path.length - 1 };
+      }
+      return;
+    }
+    if (path.length - 1 >= maxHops) return;
+    for (const { to, fidelity } of adj.get(node) ?? []) {
+      if (visited.has(to)) continue;
+      visited.add(to);
+      dfs(to, [...path, to], product * fidelity);
+      visited.delete(to);
+    }
+  };
+
+  if (src !== dst) dfs(src, [src], 1);
+  if (best) {
+    const b = best as RouteResult;
+    return { ...b, end_to_end_fidelity: Number(b.end_to_end_fidelity.toFixed(4)) };
+  }
+  return null;
+}

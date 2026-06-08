@@ -28,6 +28,8 @@ export const cadences = {
   events: 300,
   /** Recompute + flush the live_links routing summary. */
   liveLinks: 300,
+  /** Process PENDING requests (route / reserve / swap / fulfill / fail). */
+  routing: 250,
   /** Write a metrics snapshot. */
   metrics: 1000,
   /** Re-read controls from Aurora (picks up UI changes). */

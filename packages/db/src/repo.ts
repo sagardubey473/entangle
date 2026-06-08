@@ -6,11 +6,14 @@
 
 import {
   DEFAULT_SIM_CONTROLS,
+  ROUTE_QUERY_SQL,
+  MAX_HOPS,
   type ConnectionRequest,
   type LiveLink,
   type MetricsSnapshot,
   type NetworkEvent,
   type QuantumNode,
+  type RouteResult,
   type SimControls,
 } from "@entangle/shared";
 import { exec, query, batchExec, str, num, bool, json } from "./aurora.js";
@@ -232,6 +235,101 @@ interface RequestRow {
   fulfilled_at: number | null;
   path: string[] | null;
   delivered_fidelity: number | null;
+}
+
+export async function createRequest(req: {
+  request_id: string;
+  src_node: string;
+  dst_node: string;
+  min_fidelity: number;
+  deadline_ms: number;
+  created_at: number;
+}): Promise<void> {
+  await exec(
+    `INSERT INTO requests (request_id, src_node, dst_node, min_fidelity, deadline_ms, status, created_at)
+     VALUES (:id, :src, :dst, :minf, :deadline, 'PENDING', :created)`,
+    [
+      str("id", req.request_id),
+      str("src", req.src_node),
+      str("dst", req.dst_node),
+      num("minf", req.min_fidelity),
+      num("deadline", req.deadline_ms),
+      num("created", req.created_at),
+    ],
+  );
+}
+
+export async function getPendingRequests(): Promise<ConnectionRequest[]> {
+  const rows = await query<RequestRow>(
+    `SELECT request_id, src_node, dst_node, min_fidelity, deadline_ms, status,
+            created_at, fulfilled_at, path, delivered_fidelity
+     FROM requests WHERE status = 'PENDING' ORDER BY created_at ASC`,
+  );
+  return rows.map((r) => ({
+    request_id: r.request_id,
+    src_node: r.src_node,
+    dst_node: r.dst_node,
+    min_fidelity: r.min_fidelity,
+    deadline_ms: Number(r.deadline_ms),
+    status: r.status,
+    created_at: Number(r.created_at),
+    fulfilled_at: r.fulfilled_at === null ? null : Number(r.fulfilled_at),
+    path: r.path,
+    delivered_fidelity: r.delivered_fidelity,
+  }));
+}
+
+export async function markRequestFulfilled(
+  requestId: string,
+  path: string[],
+  deliveredFidelity: number,
+  fulfilledAt: number,
+): Promise<void> {
+  await exec(
+    `UPDATE requests SET status = 'FULFILLED', path = :path::jsonb,
+       delivered_fidelity = :df, fulfilled_at = :fa
+     WHERE request_id = :id AND status = 'PENDING'`,
+    [
+      json("path", path),
+      num("df", deliveredFidelity),
+      num("fa", fulfilledAt),
+      str("id", requestId),
+    ],
+  );
+}
+
+export async function markRequestFailed(requestId: string): Promise<void> {
+  await exec(
+    `UPDATE requests SET status = 'FAILED' WHERE request_id = :id AND status = 'PENDING'`,
+    [str("id", requestId)],
+  );
+}
+
+/**
+ * Run the recursive-CTE route query (the maximum-product-fidelity path over
+ * live_links). Returns the best route, or null if none qualifies.
+ */
+export async function runRoute(
+  src: string,
+  dst: string,
+  minFidelity: number,
+): Promise<RouteResult | null> {
+  const rows = await query<{ path: string[]; end_to_end_fidelity: number; hops: number }>(
+    ROUTE_QUERY_SQL,
+    [
+      str("src", src),
+      str("dst", dst),
+      num("min_fidelity", minFidelity),
+      num("max_hops", MAX_HOPS),
+    ],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    path: r.path,
+    end_to_end_fidelity: Number(r.end_to_end_fidelity),
+    hops: Number(r.hops),
+  };
 }
 
 export async function getRecentRequests(limit = 25): Promise<ConnectionRequest[]> {

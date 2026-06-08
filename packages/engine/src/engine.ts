@@ -24,7 +24,7 @@ import {
   type NetworkEvent,
   type SimControls,
 } from "@entangle/shared";
-import { dynamo, repo } from "@entangle/db";
+import { dynamo, repo, PairUnavailableError } from "@entangle/db";
 
 const TOTAL_MEMORY_SLOTS = NODES.reduce((s, n) => s + n.memory_slots, 0);
 
@@ -127,6 +127,176 @@ export class EntangleEngine {
       }
     }
     return expired;
+  }
+
+  // -------------------------------------------------------------------------
+  // ROUTE + RESERVE + SWAP (Phase 4)
+  // -------------------------------------------------------------------------
+
+  /** Best AVAILABLE in-memory pair between two nodes (highest current fidelity). */
+  private bestAvailablePair(a: string, b: string, now: number): EntangledPair | null {
+    const key = endpointsKey(a, b);
+    let best: EntangledPair | null = null;
+    let bestF = 0;
+    for (const p of this.livePairs.values()) {
+      if (p.status !== "AVAILABLE" || p.endpoints !== key) continue;
+      const f = currentFidelity(p.initial_fidelity, p.decay_rate, p.created_at, now);
+      if (f > bestF) {
+        bestF = f;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Process every PENDING request: fail those past deadline; for the rest, run
+   * the Aurora recursive-CTE route query and try to fulfill via atomic
+   * reservation + swapping. Lost races / partial reservations are released and
+   * retried on a later tick.
+   */
+  async routeRequests(now: number): Promise<void> {
+    let pending: Awaited<ReturnType<typeof repo.getPendingRequests>>;
+    try {
+      pending = await repo.getPendingRequests();
+    } catch (err) {
+      console.error("\nrouteRequests: failed to load pending:", err);
+      return;
+    }
+
+    for (const req of pending) {
+      if (now > req.created_at + req.deadline_ms) {
+        await this.failRequest(req.request_id, "deadline exceeded");
+        continue;
+      }
+      let route;
+      try {
+        route = await repo.runRoute(req.src_node, req.dst_node, req.min_fidelity);
+      } catch (err) {
+        console.error(`\nrouteRequests: route query failed for ${req.request_id}:`, err);
+        continue;
+      }
+      if (!route) continue; // no path right now — retry next tick
+      await this.fulfill(req, route.path, now);
+    }
+  }
+
+  private async failRequest(requestId: string, reason: string): Promise<void> {
+    try {
+      await repo.markRequestFailed(requestId);
+      this.failedTotal++;
+      this.queueEvent("FAILED", null, requestId, { reason });
+    } catch (err) {
+      console.error(`\nfailRequest ${requestId}:`, err);
+    }
+  }
+
+  /**
+   * Try to fulfill `req` along `path`: reserve every hop pair atomically, swap
+   * (consume intermediates), deliver one end-to-end pair, and mark FULFILLED.
+   * Any reservation loss or fidelity shortfall releases all and bails (retry).
+   */
+  private async fulfill(
+    req: { request_id: string; src_node: string; dst_node: string; min_fidelity: number },
+    path: string[],
+    now: number,
+  ): Promise<void> {
+    // 1. Pick the best in-memory pair for each hop.
+    const hopPairs: EntangledPair[] = [];
+    for (let i = 0; i < path.length - 1; i++) {
+      const pair = this.bestAvailablePair(path[i]!, path[i + 1]!, now);
+      if (!pair) return; // inventory gone since the route query — retry next tick
+      hopPairs.push(pair);
+    }
+
+    // 2. Reserve each atomically (no-cloning enforced by conditional write).
+    const reserved: EntangledPair[] = [];
+    try {
+      for (const pair of hopPairs) {
+        await dynamo.allocatePair(pair.pair_id, req.request_id);
+        pair.status = "RESERVED";
+        pair.reserved_by = req.request_id;
+        reserved.push(pair);
+        this.queueEvent("RESERVED", pair.pair_id, req.request_id, { link_id: pair.link_id });
+      }
+    } catch (err) {
+      if (err instanceof PairUnavailableError) {
+        await this.releaseAll(reserved, req.request_id);
+        return; // lost a race — retry next tick
+      }
+      await this.releaseAll(reserved, req.request_id);
+      console.error(`\nfulfill ${req.request_id}: reservation error:`, err);
+      return;
+    }
+
+    // 3. End-to-end fidelity = product of the reserved pairs' current fidelities.
+    const product = reserved.reduce(
+      (acc, p) => acc * currentFidelity(p.initial_fidelity, p.decay_rate, p.created_at, now),
+      1,
+    );
+    if (product < req.min_fidelity) {
+      await this.releaseAll(reserved, req.request_id);
+      return; // degraded below threshold — release and retry
+    }
+
+    // 4. Swap: consume every intermediate pair, emit swap events.
+    try {
+      for (const pair of reserved) {
+        await dynamo.setPairStatus(pair.pair_id, "CONSUMED");
+        this.livePairs.delete(pair.pair_id);
+        this.queueEvent("CONSUMED", pair.pair_id, req.request_id, { link_id: pair.link_id });
+      }
+      for (let i = 1; i < path.length - 1; i++) {
+        this.queueEvent("SWAPPED", null, req.request_id, { at: path[i] });
+      }
+
+      // 5. Deliver one end-to-end pair (ledger artifact; consumed on delivery).
+      const longPair: EntangledPair = {
+        pair_id: ulid(),
+        node_a: req.src_node,
+        node_b: req.dst_node,
+        link_id: null,
+        initial_fidelity: Number(product.toFixed(4)),
+        created_at: now,
+        decay_rate: 0,
+        status: "CONSUMED",
+        reserved_by: req.request_id,
+        expires_at: Math.ceil(now / 1000) + 60,
+        is_long_link: true,
+        hop_count: path.length - 1,
+        endpoints: endpointsKey(req.src_node, req.dst_node),
+        gsi_status: "CONSUMED",
+      };
+      await dynamo.putPair(longPair);
+
+      // 6. Mark fulfilled.
+      const delivered = Number(product.toFixed(4));
+      await repo.markRequestFulfilled(req.request_id, path, delivered, now);
+      this.fulfilledTotal++;
+      this.deliveredFidelitySum += delivered;
+      this.queueEvent("FULFILLED", longPair.pair_id, req.request_id, {
+        path,
+        delivered_fidelity: delivered,
+        hops: path.length - 1,
+      });
+    } catch (err) {
+      console.error(`\nfulfill ${req.request_id}: swap/deliver error:`, err);
+      // Pairs already consumed can't be released; leave request PENDING to retry
+      // is unsafe here, so fail it explicitly.
+      await this.failRequest(req.request_id, "swap failed");
+    }
+  }
+
+  private async releaseAll(pairs: EntangledPair[], requestId: string): Promise<void> {
+    for (const pair of pairs) {
+      try {
+        await dynamo.releasePair(pair.pair_id, requestId);
+        pair.status = "AVAILABLE";
+        pair.reserved_by = null;
+      } catch (err) {
+        console.error(`\nreleaseAll: failed to release ${pair.pair_id}:`, err);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
