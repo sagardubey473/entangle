@@ -1,12 +1,9 @@
-import { Radio, Zap } from "lucide-react";
-import { CorridorMapLive } from "@/components/corridor-map-live";
-import { RequestForm } from "@/components/request-form";
-import { LivePanels } from "@/components/live-panels";
+import { Zap } from "lucide-react";
+import { ControlPlane } from "@/components/control-plane";
 
 export default function Home() {
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-      {/* Header */}
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-accent">
@@ -19,6 +16,10 @@ export default function Home() {
           <p className="mt-1 max-w-2xl text-sm text-muted">
             Air-traffic control for a network where every connection is
             perishable, can&apos;t be copied, and vanishes the instant it&apos;s used.
+            <span className="block text-xs">
+              The quantum layer is simulated on a slowed timescale — the
+              orchestration is the real artifact.
+            </span>
           </p>
         </div>
         <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-muted shadow-card">
@@ -26,51 +27,19 @@ export default function Home() {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-fidelity-high opacity-60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-fidelity-high" />
           </span>
-          Simulated quantum layer · live orchestration
+          East Coast quantum corridor · live
         </span>
       </header>
 
-      {/* Map + legend */}
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <CorridorMapLive />
+      <ControlPlane />
 
-        <aside className="flex flex-col gap-4">
-          <RequestForm />
-          <LivePanels />
-
-          <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Radio className="h-4 w-4 text-accent" aria-hidden />
-              East Coast quantum corridor
-            </h2>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
-              Models the real Long Island / NY testbed (NYSQIT / SCY-QNet),
-              extended down a plausible inter-city spine to Washington DC. We
-              model this testbed — we do not connect to it.
-            </p>
-            <div className="mt-3 space-y-2 text-xs text-muted">
-              <div>
-                <div className="mb-1 font-medium text-foreground">Link fidelity</div>
-                <div className="h-2 w-full rounded-full bg-gradient-to-r from-fidelity-low via-fidelity-mid to-fidelity-high" />
-                <div className="mt-1 flex justify-between">
-                  <span>0.5 (floor)</span>
-                  <span>1.0</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 pt-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-node-endpoint" />
-                  Endpoint
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-node-repeater" />
-                  Repeater
-                </span>
-              </div>
-            </div>
-          </div>
-        </aside>
-      </section>
+      <footer className="mt-10 border-t border-border pt-4 text-xs leading-relaxed text-muted">
+        Models the real Long Island / NY quantum testbed (NYSQIT / SCY-QNet —
+        Stony Brook, Brookhaven, Columbia, Yale) extended down an inter-city
+        spine to Washington DC. We model this testbed; we do not connect to it.
+        There is no direct NYC–DC link — that connection is built by entanglement
+        swapping across repeaters.
+      </footer>
     </main>
   );
 }

@@ -155,12 +155,33 @@ See [`.env.example`](.env.example). Summary:
 
 - [x] **Phase 0** — monorepo scaffold, shared types + fidelity math, infra
   provisioning, Aurora migration + seed, `.env.example`, README.
-- [ ] Phase 1 — DynamoDB + Aurora Data API clients (atomic allocate/release).
-- [ ] Phase 2 — engine tick loop (generate / decay / expire).
-- [ ] Phase 3 — Next.js app + `/api/state` + live corridor map.
-- [ ] Phase 4 — requests + recursive-CTE routing + atomic reservation + swaps.
-- [ ] Phase 5 — dashboards, timeline, controls, no-cloning proof, responsive pass.
+- [x] **Phase 1** — DynamoDB + Aurora Data API clients (atomic allocate/release).
+- [x] **Phase 2** — engine tick loop (generate / decay / expire).
+- [x] **Phase 3** — Next.js app + `/api/state` + live corridor map.
+- [x] **Phase 4** — requests + recursive-CTE routing + atomic reservation + swaps.
+- [x] **Phase 5** — dashboards, timeline, controls, no-cloning proof, responsive pass.
 - [ ] Phase 6 (optional) — real AWS Braket entanglement-swap circuit on one QPU.
+
+### Running offline (no AWS)
+
+The web app ships with an in-process **demo simulator** that reuses the exact
+shared math + topology. With no AWS configured (or `ENTANGLE_DEMO_MODE=1`), the
+entire UI — map, routing, dashboards, controls, inject-failure, and the
+no-cloning proof — runs end-to-end locally. The `X-Entangle-Source` response
+header reports whether a response came from `aws` or `demo`.
+
+```bash
+cd apps/web && ENTANGLE_DEMO_MODE=1 pnpm dev   # http://localhost:3000
+```
+
+### API
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/state` | GET | Full snapshot the UI polls (~400ms): nodes, links w/ live fidelity, live pairs, requests, events, metrics, `activePath`. |
+| `/api/request` | POST | Create a PENDING connection request `{ src, dst, min_fidelity }`. |
+| `/api/control` | POST | Tune gen rate / decoherence / floor / pause, or inject a link failure. |
+| `/api/proof` | POST | Fire N concurrent claims at one pair — exactly 1 wins (no-cloning). |
 
 ## License
 

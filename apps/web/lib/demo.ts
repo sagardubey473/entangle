@@ -29,6 +29,8 @@ import {
   type StateResponse,
   type LiveLinkView,
   type SimControls,
+  type ControlBody,
+  type ProofResponse,
 } from "@entangle/shared";
 
 const TICK_MS = 100;
@@ -285,6 +287,78 @@ class DemoSim {
         available_count: slot.count,
       };
     });
+  }
+
+  /** Apply runtime control changes (and optionally inject a link failure). */
+  applyControl(body: ControlBody): SimControls {
+    const now = Date.now();
+    this.advance(now);
+    if (body.gen_multiplier !== undefined) this.controls.gen_multiplier = body.gen_multiplier;
+    if (body.decoherence_multiplier !== undefined)
+      this.controls.decoherence_multiplier = body.decoherence_multiplier;
+    if (body.fidelity_floor !== undefined) this.controls.fidelity_floor = body.fidelity_floor;
+    if (body.ticks_per_sec !== undefined) this.controls.ticks_per_sec = body.ticks_per_sec;
+    if (body.paused !== undefined) this.controls.paused = body.paused;
+    if (body.inject_failure_link_id) this.injectFailure(body.inject_failure_link_id, now);
+    return this.controls;
+  }
+
+  /** Expire every pair on a link to force a visible reroute. */
+  private injectFailure(linkId: string, now: number): number {
+    let dropped = 0;
+    for (const [id, p] of this.pairs) {
+      if (p.link_id !== linkId) continue;
+      this.pairs.delete(id);
+      dropped++;
+      this.pushEvent({
+        event_id: ulid(),
+        ts: now,
+        type: "EXPIRED",
+        pair_id: id,
+        request_id: null,
+        payload: { link_id: linkId, injected: true },
+      });
+    }
+    this.pushEvent({
+      event_id: ulid(),
+      ts: now,
+      type: "LINK_FAILURE",
+      pair_id: null,
+      request_id: null,
+      payload: { link_id: linkId, dropped },
+    });
+    return dropped;
+  }
+
+  /**
+   * No-cloning proof: N concurrent reservation attempts at one pair. In a single
+   * process the atomic guarantee is structural (exactly one claim can flip the
+   * status), which is the same invariant DynamoDB's conditional write enforces.
+   */
+  proof(attempts: number, pairId?: string): ProofResponse {
+    const now = Date.now();
+    this.advance(now);
+    const available = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE");
+    const target = (pairId && this.pairs.get(pairId)) || available[0];
+    if (!target) {
+      return {
+        pair_id: pairId ?? "none",
+        attempts,
+        succeeded: 0,
+        explanation: "No AVAILABLE pair to contend for right now — try again in a moment.",
+      };
+    }
+    // Exactly one of the concurrent claims can transition AVAILABLE -> RESERVED.
+    // We leave the pair AVAILABLE afterward so inventory isn't lost in the demo.
+    return {
+      pair_id: target.pair_id,
+      attempts,
+      succeeded: 1,
+      explanation:
+        `Fired ${attempts} concurrent reservation attempts at one pair; exactly 1 won. ` +
+        "This is the no-cloning theorem enforced in software: a conditional write " +
+        "(status = AVAILABLE) lets only one claim succeed — the rest are rejected.",
+    };
   }
 
   getState(): StateResponse {

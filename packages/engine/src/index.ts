@@ -73,6 +73,11 @@ async function main(): Promise<void> {
       if (now - lastControls >= cadences.controls) {
         try {
           engine.controls = await repo.getControls();
+          const failLink = await repo.consumeInjectFailure();
+          if (failLink) {
+            const dropped = await engine.injectFailure(failLink, now);
+            console.log(`\ninjected failure on ${failLink}: dropped ${dropped} pairs`);
+          }
         } catch (err) {
           console.error("\ncontrols refresh failed:", err);
         }

@@ -74,6 +74,32 @@ export async function updateControls(patch: Partial<SimControls>): Promise<void>
   await exec(`UPDATE sim_controls SET ${sets.join(", ")} WHERE id = 'controls'`, params);
 }
 
+/** Set the transient inject-failure signal for the engine to consume. */
+export async function setInjectFailure(linkId: string): Promise<void> {
+  await exec(
+    `UPDATE sim_controls SET inject_failure_link_id = :lid WHERE id = 'controls'`,
+    [str("lid", linkId)],
+  );
+}
+
+/**
+ * Read and clear the inject-failure signal in one shot. Returns the link id the
+ * engine should fail, or null if none pending. The CTE captures the pre-update
+ * value (plain RETURNING would give the new, now-null value).
+ */
+export async function consumeInjectFailure(): Promise<string | null> {
+  const rows = await query<{ link_id: string | null }>(
+    `WITH old AS (
+       SELECT inject_failure_link_id AS lid FROM sim_controls WHERE id = 'controls'
+     )
+     UPDATE sim_controls SET inject_failure_link_id = NULL
+     FROM old
+     WHERE sim_controls.id = 'controls' AND old.lid IS NOT NULL
+     RETURNING old.lid AS link_id`,
+  );
+  return rows.length > 0 ? rows[0]!.link_id : null;
+}
+
 // ---------------------------------------------------------------------------
 // Topology
 // ---------------------------------------------------------------------------

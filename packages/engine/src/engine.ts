@@ -300,6 +300,28 @@ export class EntangleEngine {
   }
 
   // -------------------------------------------------------------------------
+  // Inject link failure (operator action -> visible reroute)
+  // -------------------------------------------------------------------------
+
+  /** Expire every live pair on a link, forcing pending requests to reroute. */
+  async injectFailure(linkId: string, now: number): Promise<number> {
+    let dropped = 0;
+    for (const pair of [...this.livePairs.values()]) {
+      if (pair.link_id !== linkId) continue;
+      try {
+        await dynamo.setPairStatus(pair.pair_id, "EXPIRED");
+        this.livePairs.delete(pair.pair_id);
+        dropped++;
+        this.queueEvent("EXPIRED", pair.pair_id, null, { link_id: linkId, injected: true });
+      } catch (err) {
+        console.error(`\ninjectFailure: failed to expire ${pair.pair_id}:`, err);
+      }
+    }
+    this.queueEvent("LINK_FAILURE", null, null, { link_id: linkId, dropped });
+    return dropped;
+  }
+
+  // -------------------------------------------------------------------------
   // Derived views: live_links + metrics
   // -------------------------------------------------------------------------
 

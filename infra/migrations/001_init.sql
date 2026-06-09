@@ -84,14 +84,20 @@ CREATE TABLE IF NOT EXISTS metrics_snapshots (
 -- the engine reads each tick. (The spec allows Aurora row or DynamoDB item; we
 -- use a row here so it sits alongside the rest of the durable control state.)
 CREATE TABLE IF NOT EXISTS sim_controls (
-  id                     text PRIMARY KEY DEFAULT 'controls',
-  ticks_per_sec          integer NOT NULL DEFAULT 10,
-  gen_multiplier         double precision NOT NULL DEFAULT 1.0,
-  decoherence_multiplier double precision NOT NULL DEFAULT 1.0,
-  fidelity_floor         double precision NOT NULL DEFAULT 0.5,
-  paused                 boolean NOT NULL DEFAULT false,
-  updated_at             timestamptz NOT NULL DEFAULT now()
+  id                       text PRIMARY KEY DEFAULT 'controls',
+  ticks_per_sec            integer NOT NULL DEFAULT 10,
+  gen_multiplier           double precision NOT NULL DEFAULT 1.0,
+  decoherence_multiplier   double precision NOT NULL DEFAULT 1.0,
+  fidelity_floor           double precision NOT NULL DEFAULT 0.5,
+  paused                   boolean NOT NULL DEFAULT false,
+  -- Transient signal: the web sets this; the engine consumes it (expires every
+  -- pair on the link to force a visible reroute) and clears it back to NULL.
+  inject_failure_link_id   text,
+  updated_at               timestamptz NOT NULL DEFAULT now()
 );
+
+-- Idempotent for clusters created before this column existed.
+ALTER TABLE sim_controls ADD COLUMN IF NOT EXISTS inject_failure_link_id text;
 
 INSERT INTO sim_controls (id) VALUES ('controls')
 ON CONFLICT (id) DO NOTHING;
