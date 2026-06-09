@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState, type CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { BASEMAP } from "@/lib/basemap";
 
 export type Tier = "testbed" | "extension";
 export type Kind = "endpoint" | "repeater";
@@ -105,14 +106,22 @@ export function QuantumCorridorMap({
     return s;
   }, [activePath]);
 
-  // self-rendered faint dotted texture (one coordinate system, fully light-themed)
-  const grid = useMemo(() => {
-    const pts: { x: number; y: number }[] = [];
-    const step = 18;
-    for (let x = VIEW.pad / 2; x < VIEW.w - VIEW.pad / 2; x += step)
-      for (let y = VIEW.pad / 2; y < VIEW.h - VIEW.pad / 2; y += step) pts.push({ x, y });
-    return pts;
-  }, []);
+  // Real Northeast US state outlines, projected with the same fn as the nodes,
+  // so the corridor sits on an actual (light-themed) map of the region.
+  const landPaths = useMemo(() => {
+    return BASEMAP.flatMap((s) =>
+      s.rings.map((ring) => {
+        let d = "";
+        for (let i = 0; i < ring.length; i++) {
+          const lng = ring[i][0];
+          const lat = ring[i][1];
+          const p = project(lat, lng);
+          d += `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)} `;
+        }
+        return d + "Z";
+      }),
+    );
+  }, [project]);
 
   const showLabel = (n: NetworkNode) =>
     labelMode === "all" ||
@@ -132,10 +141,11 @@ export function QuantumCorridorMap({
           </filter>
         </defs>
 
-        {/* dotted background texture */}
-        <g opacity={0.5}>
-          {grid.map((d, i) => (
-            <circle key={i} cx={d.x} cy={d.y} r={1} fill="#0000001f" />
+        {/* water + real Northeast US landmasses (light-themed basemap) */}
+        <rect x={0} y={0} width={VIEW.w} height={VIEW.h} fill="#F1F6FB" />
+        <g>
+          {landPaths.map((d, i) => (
+            <path key={i} d={d} fill="#E7EDF4" stroke="#CBD5E1" strokeWidth={0.75} strokeLinejoin="round" />
           ))}
         </g>
 

@@ -95,7 +95,11 @@ shared databases and lets you drive the simulation.
   (`@aws-sdk/client-rds-data`) — so serverless functions don't exhaust DB
   connections.
 - **Frontend**: Next.js 14 (App Router), Tailwind (configured **light**),
-  framer-motion, Recharts, lucide-react. The network map is a data-driven SVG.
+  framer-motion, Recharts, lucide-react. The network map is a data-driven SVG
+  rendered over a real basemap of the US Northeast (state outlines projected with
+  the same projection as the nodes, which sit on their true coordinates). The
+  default view is intentionally minimal; charts/metrics/controls sit behind a
+  "Show telemetry & controls" toggle.
 - **Light theme only.** No `next-themes`, no `dark:` variants, no dark backgrounds.
 
 ## Getting started

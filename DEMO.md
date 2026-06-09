@@ -16,8 +16,11 @@ cd apps/web && ENTANGLE_DEMO_MODE=1 pnpm dev     # http://localhost:3000
 > For the live AWS path instead: provision (see `infra/README.md`), fill `.env`,
 > `pnpm infra:migrate && pnpm infra:seed`, then `pnpm dev:engine` + `pnpm dev:web`.
 
-The app **pre-warms**, so the map is already alive and the dashboards are
-populated the moment it loads. Gentle background traffic keeps charts moving.
+The app **pre-warms**, so the map is already alive the moment it loads. The
+default view is intentionally minimal — a real map of the corridor plus three
+cards (create a connection, no-cloning proof, live requests). All the numbers,
+charts, the event ledger, and the physics sliders live behind one **"Show
+telemetry & controls"** toggle, so you reveal depth only when you want it.
 
 ## 1. The one-liner (15s)
 
@@ -26,9 +29,11 @@ populated the moment it loads. Gentle background traffic keeps charts moving.
 > layer is simulated on a slowed timescale — the orchestration is the real
 > artifact."
 
-Point at the **map**: arcs are entangled-pair links, colored by live fidelity
-(emerald = high, amber → red as they decohere). Pulsing halos mark the real
-Long Island / NY testbed core (NYSQIT / SCY-QNet); the spine runs down to DC.
+Point at the **map** — a real map of the US Northeast. Arcs are entangled-pair
+links, colored by live fidelity (emerald = high, amber → red as they decohere).
+Nodes sit on their true coordinates: the Long Island / NYC testbed cluster
+(NYSQIT / SCY-QNet), up to Yale and Boston, down the spine to DC. Pulsing halos
+mark the real testbed core.
 
 ## 2. It breathes (20s)
 
@@ -63,19 +68,23 @@ the proof**. Result: **1 of 20 succeeded**.
 
 ## 5. Inject a link failure → live reroute (30s)
 
-In **Simulation controls**, pick a link on the active route (e.g.
-`Philadelphia – Baltimore`) and hit **Fail**.
+Click **"Show telemetry & controls"** to reveal the depth. In **Simulation
+controls**, pick a link on the active route (e.g. `Philadelphia – Baltimore`)
+and hit **Fail**.
 
 - Every pair on that link expires instantly (watch the arc drop to red/empty).
 - **Link coverage** (utilization) dips.
 - The next NYC→DC request must find a different path or fail if none qualifies —
   demonstrating real-time replanning over perishable inventory.
 
-## 6. Tune the physics (20s)
+## 6. Tune the physics (20s) — in the telemetry panel
 
-Drag **Generation rate** and **Decoherence rate**. Crank decoherence up and watch
-links redden and expire faster, success rate fall, and the event ledger fill with
-`EXPIRED` and `FAILED`. **Pause** freezes the whole simulation.
+With telemetry open, drag **Generation rate** and **Decoherence rate**. Crank
+decoherence up and watch links redden and expire faster, success rate fall, and
+the event ledger fill with `EXPIRED` and `FAILED`. The charts (generation rate,
+success rate, avg delivered fidelity, live pairs, link coverage) and the
+append-only event ledger are all here for judges who want the depth. **Pause**
+freezes the whole simulation.
 
 ## 7. The architecture point (30s)
 
