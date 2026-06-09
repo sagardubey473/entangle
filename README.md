@@ -7,6 +7,10 @@ orchestration layer that tracks a stochastic, decaying inventory of entangled
 pairs and routes end-to-end connections across repeater chains before the links
 decohere.
 
+![Entangle dashboard](docs/img/dashboard-desktop.png)
+
+> **Demo:** see [`DEMO.md`](DEMO.md) for a 3–4 minute judged-walkthrough script.
+
 > ### Honesty note
 > **The quantum layer is _simulated_ on a deliberately slowed timescale. The
 > orchestration is the real artifact.** We do not use (and cannot access) real

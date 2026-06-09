@@ -14,7 +14,6 @@
 import { ulid } from "ulid";
 import {
   LINKS,
-  NODES,
   currentFidelity,
   expiresAtSeconds,
   endpointsKey,
@@ -25,8 +24,6 @@ import {
   type SimControls,
 } from "@entangle/shared";
 import { dynamo, repo, PairUnavailableError } from "@entangle/db";
-
-const TOTAL_MEMORY_SLOTS = NODES.reduce((s, n) => s + n.memory_slots, 0);
 
 export class EntangleEngine {
   /** AVAILABLE pairs the engine knows about, keyed by pair_id. */
@@ -371,8 +368,14 @@ export class EntangleEngine {
 
   buildMetrics(now: number): MetricsSnapshot {
     const live = this.livePairs.size;
-    // Each pair occupies one memory slot at each of its two endpoints.
-    const utilization = Math.min(1, (2 * live) / TOTAL_MEMORY_SLOTS);
+    // Utilization = link coverage: fraction of physical links currently carrying
+    // usable inventory. Drops when links decohere or are failed; a meaningful
+    // health signal (vs. raw slot occupancy, which pins at 100%).
+    const coveredLinks = new Set<string>();
+    for (const p of this.livePairs.values()) {
+      if (p.status === "AVAILABLE" && p.link_id) coveredLinks.add(p.link_id);
+    }
+    const utilization = coveredLinks.size / LINKS.length;
     const avgDelivered =
       this.fulfilledTotal > 0
         ? this.deliveredFidelitySum / this.fulfilledTotal

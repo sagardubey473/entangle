@@ -35,9 +35,11 @@ import {
 
 const TICK_MS = 100;
 const MAX_CATCHUP_MS = 3000;
-const TOTAL_SLOTS = NODES.reduce((s, n) => s + n.memory_slots, 0);
 const MAX_EVENTS = 200;
 const MAX_METRICS = 120;
+const WARMUP_MS = 12_000;
+const AUTO_TRAFFIC_INTERVAL_MS = 2500;
+const ENDPOINTS = NODES.filter((n) => n.kind === "endpoint").map((n) => n.node_id);
 
 class DemoSim {
   private pairs = new Map<string, EntangledPair>();
@@ -50,27 +52,81 @@ class DemoSim {
 
   private lastTick = Date.now();
   private lastMetricAt = 0;
+  private lastAutoReqAt = 0;
   private generatedTotal = 0;
   private fulfilledTotal = 0;
   private failedTotal = 0;
   private deliveredSum = 0;
+  private warmed = false;
+  private autoSeq = 0;
+
+  /** One simulation step. */
+  private step(t: number): void {
+    if (!this.controls.paused) {
+      this.generate(t);
+      this.expire(t);
+      this.maybeAutoTraffic(t);
+      this.route(t);
+    }
+    if (t - this.lastMetricAt >= 1000) {
+      this.snapshot(t);
+      this.lastMetricAt = t;
+    }
+  }
+
+  /** On first use, simulate a warm-up window so the map is alive immediately. */
+  private warmUp(now: number): void {
+    if (this.warmed) return;
+    this.warmed = true;
+    const start = now - WARMUP_MS;
+    this.lastTick = start;
+    this.lastMetricAt = start;
+    this.lastAutoReqAt = start;
+    for (let t = start + TICK_MS; t <= now; t += TICK_MS) this.step(t);
+    this.lastTick = now;
+  }
 
   /** Advance the simulation up to `now`, in fixed steps (capped catch-up). */
   private advance(now: number): void {
+    if (!this.warmed) {
+      this.warmUp(now);
+      return;
+    }
     let from = this.lastTick;
     if (now - from > MAX_CATCHUP_MS) from = now - MAX_CATCHUP_MS;
-    for (let t = from + TICK_MS; t <= now; t += TICK_MS) {
-      if (!this.controls.paused) {
-        this.generate(t);
-        this.expire(t);
-        this.route(t);
-      }
-      if (t - this.lastMetricAt >= 1000) {
-        this.snapshot(t);
-        this.lastMetricAt = t;
-      }
-    }
+    for (let t = from + TICK_MS; t <= now; t += TICK_MS) this.step(t);
     this.lastTick = now;
+  }
+
+  /** Periodically inject background requests so the dashboards stay populated. */
+  private maybeAutoTraffic(now: number): void {
+    if (now - this.lastAutoReqAt < AUTO_TRAFFIC_INTERVAL_MS) return;
+    this.lastAutoReqAt = now;
+    this.autoSeq++;
+    // Every 3rd auto-request is the headline NYC -> DC multi-hop route.
+    let src: string;
+    let dst: string;
+    if (this.autoSeq % 3 === 0) {
+      src = "nyc";
+      dst = "dc";
+    } else {
+      const pick = (n: number) => ENDPOINTS[n % ENDPOINTS.length]!;
+      src = pick(this.autoSeq * 7);
+      dst = pick(this.autoSeq * 13 + 1);
+      if (src === dst) dst = pick(this.autoSeq * 13 + 2);
+    }
+    this.requests.push({
+      request_id: ulid(),
+      src_node: src,
+      dst_node: dst,
+      min_fidelity: 0.5,
+      deadline_ms: DEFAULT_DEADLINE_MS,
+      status: "PENDING",
+      created_at: now,
+      fulfilled_at: null,
+      path: null,
+      delivered_fidelity: null,
+    });
   }
 
   private pushEvent(e: NetworkEvent): void {
@@ -130,7 +186,12 @@ class DemoSim {
   }
 
   private snapshot(now: number): void {
-    const live = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE").length;
+    const availablePairs = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE");
+    const live = availablePairs.length;
+    // Utilization = link coverage (matches the engine): fraction of physical
+    // links currently carrying usable inventory.
+    const covered = new Set<string>();
+    for (const p of availablePairs) if (p.link_id) covered.add(p.link_id);
     const avgDelivered =
       this.fulfilledTotal > 0 ? this.deliveredSum / this.fulfilledTotal : 0;
     this.metrics.push({
@@ -140,7 +201,7 @@ class DemoSim {
       failed_total: this.failedTotal,
       avg_delivered_fidelity: Number(avgDelivered.toFixed(4)),
       live_pair_count: live,
-      utilization: Number(Math.min(1, (2 * live) / TOTAL_SLOTS).toFixed(4)),
+      utilization: Number((covered.size / LINKS.length).toFixed(4)),
     });
     if (this.metrics.length > MAX_METRICS) this.metrics.splice(0, this.metrics.length - MAX_METRICS);
   }

@@ -21,7 +21,7 @@ export default function RootLayout({
   // No next-themes, no dark class — light theme only.
   return (
     <html lang="en">
-      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
+      <body className="min-h-screen overflow-x-hidden bg-background font-sans text-foreground antialiased">
         {children}
       </body>
     </html>

@@ -12,7 +12,9 @@ export const DEFAULT_DEADLINE_MS = 8000;
 /** Default runtime-tunable simulation controls. */
 export const DEFAULT_SIM_CONTROLS: SimControls = {
   ticks_per_sec: 10,
-  gen_multiplier: 1.0,
+  // 0.5 keeps inventory lively but sparse enough that long links occasionally
+  // run dry — so link coverage (utilization) and routing both visibly fluctuate.
+  gen_multiplier: 0.5,
   decoherence_multiplier: 1.0,
   fidelity_floor: 0.5,
   paused: false,

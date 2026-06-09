@@ -56,7 +56,7 @@ export function EventTimeline({ events }: { events: NetworkEvent[] }) {
     <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
       <h2 className="text-sm font-semibold text-foreground">Event ledger</h2>
       <p className="mt-0.5 text-[11px] text-muted">Append-only — every generation, swap, and expiry.</p>
-      <div className="mt-3 max-h-[300px] space-y-1 overflow-y-auto pr-1 font-mono text-[11px] leading-relaxed">
+      <div className="mt-3 max-h-[300px] space-y-1 overflow-y-auto overflow-x-hidden pr-1 font-mono text-[11px] leading-relaxed">
         <AnimatePresence initial={false}>
           {events.map((e) => (
             <motion.div
@@ -69,7 +69,7 @@ export function EventTimeline({ events }: { events: NetworkEvent[] }) {
             >
               <span className="shrink-0 text-muted">{ts(e.ts)}</span>
               <span className={`shrink-0 font-semibold ${TYPE_COLOR[e.type]}`}>{e.type}</span>
-              <span className="truncate text-foreground/80">{describe(e)}</span>
+              <span className="min-w-0 flex-1 truncate text-foreground/80">{describe(e)}</span>
             </motion.div>
           ))}
         </AnimatePresence>
