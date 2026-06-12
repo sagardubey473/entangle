@@ -54,14 +54,17 @@ export function RequestFeed({ requests }: { requests: ConnectionRequest[] }) {
                 </span>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-                <span>min F ≥ {r.min_fidelity.toFixed(2)}</span>
+                <span>needed ≥ {r.min_fidelity.toFixed(2)}</span>
                 {r.status === "FULFILLED" && r.delivered_fidelity != null && (
                   <span className="text-emerald-600">
-                    delivered F = {r.delivered_fidelity.toFixed(3)}
-                    {r.path ? ` · ${r.path.length - 1} hops` : ""}
+                    delivered {r.delivered_fidelity.toFixed(2)}
+                    {r.path ? ` · ${r.path.length - 1} hop${r.path.length - 1 === 1 ? "" : "s"}` : ""}
                   </span>
                 )}
-                {r.status === "FAILED" && <span className="text-red-600">no route in time</span>}
+                {r.status === "FAILED" && (
+                  <span className="text-red-600">no route met the fidelity floor</span>
+                )}
+                {r.status === "PENDING" && <span className="text-amber-600">routing…</span>}
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" aria-hidden />
                   {ago(r.created_at)}

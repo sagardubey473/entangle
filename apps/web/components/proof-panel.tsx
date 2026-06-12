@@ -73,7 +73,11 @@ export function ProofPanel() {
           <div className="text-center text-[11px] font-medium text-emerald-700">
             reservation{result.succeeded === 1 ? "" : "s"} succeeded
           </div>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted">{result.explanation}</p>
+          <p className="mt-2 text-center text-[11px] font-semibold leading-snug text-emerald-800">
+            {result.attempts} concurrent claims, exactly {result.succeeded} succeeded — uniqueness
+            enforced by a DynamoDB conditional write.
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted">{result.explanation}</p>
         </motion.div>
       )}
     </div>

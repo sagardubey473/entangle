@@ -4,16 +4,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { EventType, NetworkEvent } from "@entangle/shared";
 import { nodeLabel } from "@/lib/nodes";
 
-const TYPE_COLOR: Record<EventType, string> = {
-  GENERATED: "text-emerald-600",
-  EXPIRED: "text-red-500",
-  RESERVED: "text-accent",
-  CONSUMED: "text-sky-600",
-  SWAPPED: "text-violet-600",
-  FULFILLED: "text-emerald-600",
-  FAILED: "text-red-600",
-  LINK_FAILURE: "text-red-600",
-  CONTROL: "text-muted",
+const TYPE_BADGE: Record<EventType, string> = {
+  GENERATED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  EXPIRED: "bg-red-50 text-red-600 border-red-200",
+  RESERVED: "bg-indigo-50 text-accent border-indigo-200",
+  CONSUMED: "bg-sky-50 text-sky-700 border-sky-200",
+  SWAPPED: "bg-violet-50 text-violet-700 border-violet-200",
+  FULFILLED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  FAILED: "bg-red-50 text-red-700 border-red-200",
+  LINK_FAILURE: "bg-red-50 text-red-700 border-red-200",
+  CONTROL: "bg-gray-50 text-muted border-gray-200",
 };
 
 function linkLabel(linkId: unknown): string {
@@ -68,7 +68,11 @@ export function EventTimeline({ events }: { events: NetworkEvent[] }) {
               className="flex items-baseline gap-2"
             >
               <span className="shrink-0 text-muted">{ts(e.ts)}</span>
-              <span className={`shrink-0 font-semibold ${TYPE_COLOR[e.type]}`}>{e.type}</span>
+              <span
+                className={`shrink-0 rounded border px-1 py-px text-[9px] font-semibold uppercase tracking-wide ${TYPE_BADGE[e.type]}`}
+              >
+                {e.type}
+              </span>
               <span className="min-w-0 flex-1 truncate text-foreground/80">{describe(e)}</span>
             </motion.div>
           ))}

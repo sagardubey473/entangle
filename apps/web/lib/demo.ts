@@ -37,9 +37,33 @@ const TICK_MS = 100;
 const MAX_CATCHUP_MS = 3000;
 const MAX_EVENTS = 200;
 const MAX_METRICS = 120;
-const WARMUP_MS = 12_000;
-const AUTO_TRAFFIC_INTERVAL_MS = 2500;
-const ENDPOINTS = NODES.filter((n) => n.kind === "endpoint").map((n) => n.node_id);
+// Warm-start window: simulate a full minute of history on construction so the
+// first frame looks like a system that's been running (it conceptually has).
+const WARMUP_MS = 60_000;
+const AUTO_TRAFFIC_INTERVAL_MS = 2600;
+
+const NODE_TIER = new Map(NODES.map((n) => [n.node_id, n.tier]));
+// Extension-tier links decohere a bit faster (longer, lossier inter-city fiber).
+const EXTENSION_LINKS = new Set(
+  LINKS.filter(
+    (l) => NODE_TIER.get(l.node_a) === "extension" || NODE_TIER.get(l.node_b) === "extension",
+  ).map((l) => l.link_id),
+);
+const EXTENSION_DECAY_MULT = 1.35;
+
+// Curated background traffic: a believable mix of 1-hop and multi-hop routes,
+// with a couple of deliberately demanding requests that fail (feeding the
+// rerouting / success-rate story). Endpoints only.
+const AUTO_PLAN: Array<{ src: string; dst: string; min: number }> = [
+  { src: "nyc", dst: "dc", min: 0.5 }, //        multi-hop, the headline route
+  { src: "bnl", dst: "sbu", min: 0.6 }, //       1-hop
+  { src: "nyc", dst: "columbia", min: 0.7 }, //  1-hop
+  { src: "boston", dst: "nyc", min: 0.55 }, //   long (5-hop) — fails when a link is dry
+  { src: "yale", dst: "boston", min: 0.55 }, //  multi-hop
+  { src: "nyc", dst: "dc", min: 0.6 }, //        multi-hop
+  { src: "columbia", dst: "princeton", min: 0.6 }, // multi-hop
+  { src: "princeton", dst: "dc", min: 0.6 }, //  multi-hop
+];
 
 class DemoSim {
   private pairs = new Map<string, EntangledPair>();
@@ -59,6 +83,17 @@ class DemoSim {
   private deliveredSum = 0;
   private warmed = false;
   private autoSeq = 0;
+  /** Per-link generation droughts (link_id -> epoch ms until which gen is off). */
+  private droughtUntil = new Map<string, number>();
+
+  constructor() {
+    // Run the demo a touch leaner than the shared default so the network isn't
+    // saturated: long links periodically run dry, so coverage/utilization and
+    // routing both visibly fluctuate instead of pinning at 100%.
+    this.controls.gen_multiplier = 0.4;
+    // Warm-start immediately so the very first /api/state is fully populated.
+    this.warmUp(Date.now());
+  }
 
   /** One simulation step. */
   private step(t: number): void {
@@ -102,24 +137,13 @@ class DemoSim {
   private maybeAutoTraffic(now: number): void {
     if (now - this.lastAutoReqAt < AUTO_TRAFFIC_INTERVAL_MS) return;
     this.lastAutoReqAt = now;
+    const plan = AUTO_PLAN[this.autoSeq % AUTO_PLAN.length]!;
     this.autoSeq++;
-    // Every 3rd auto-request is the headline NYC -> DC multi-hop route.
-    let src: string;
-    let dst: string;
-    if (this.autoSeq % 3 === 0) {
-      src = "nyc";
-      dst = "dc";
-    } else {
-      const pick = (n: number) => ENDPOINTS[n % ENDPOINTS.length]!;
-      src = pick(this.autoSeq * 7);
-      dst = pick(this.autoSeq * 13 + 1);
-      if (src === dst) dst = pick(this.autoSeq * 13 + 2);
-    }
     this.requests.push({
       request_id: ulid(),
-      src_node: src,
-      dst_node: dst,
-      min_fidelity: 0.5,
+      src_node: plan.src,
+      dst_node: plan.dst,
+      min_fidelity: plan.min,
       deadline_ms: DEFAULT_DEADLINE_MS,
       status: "PENDING",
       created_at: now,
@@ -136,9 +160,17 @@ class DemoSim {
 
   private generate(now: number): void {
     for (const link of LINKS) {
+      // Occasional per-link generation droughts create coverage variance (so
+      // utilization isn't pinned at 100% and some routes genuinely fail).
+      if ((this.droughtUntil.get(link.link_id) ?? 0) > now) continue;
+      if (Math.random() < 0.007) {
+        this.droughtUntil.set(link.link_id, now + 2500 + Math.random() * 3500);
+        continue;
+      }
       const prob = Math.min(1, link.gen_rate * this.controls.gen_multiplier * TICK_MS);
       if (Math.random() >= prob) continue;
-      const decay = link.decoherence_rate * this.controls.decoherence_multiplier;
+      const tierMult = EXTENSION_LINKS.has(link.link_id) ? EXTENSION_DECAY_MULT : 1;
+      const decay = link.decoherence_rate * this.controls.decoherence_multiplier * tierMult;
       const pair: EntangledPair = {
         pair_id: ulid(),
         node_a: link.node_a,
