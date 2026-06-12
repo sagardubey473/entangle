@@ -29,15 +29,13 @@ const SHORT_LABEL: Record<string, string> = {
   dc: "Washington DC",
 };
 
-// Hand-tuned label offsets for the crammed LI/NYC cluster (verified
-// non-overlapping at the 800×680 viewBox). Nodes not listed use the default
-// placement (centered above the node).
+// Optional gentle SEEDS that bias the deterministic label-declutter pass in the
+// map (which computes the final, verified non-overlapping positions). Only
+// directional hints here — not final coordinates. Nodes without a seed are
+// seeded radially away from the cluster centroid (or above, if isolated).
 const LABEL_OFFSET: Record<string, { dx: number; dy: number }> = {
-  columbia: { dx: -58, dy: -30 }, // fan up-left
-  nyc: { dx: 52, dy: 26 }, //        down-right (clears Columbia above + Princeton below-left)
-  sbu: { dx: 6, dy: -34 }, //        up
-  bnl: { dx: 66, dy: 4 }, //         right
-  yale: { dx: 0, dy: -26 }, //       up (already isolated, short leader)
+  columbia: { dx: -44, dy: -26 }, // bias up-left
+  nyc: { dx: 18, dy: 34 }, //        bias down (toward open water, away from Columbia/Stony Brook)
 };
 
 export const NODE_LABEL: Record<string, string> = SHORT_LABEL;

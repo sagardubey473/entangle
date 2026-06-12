@@ -42,6 +42,11 @@ const MAX_METRICS = 120;
 const WARMUP_MS = 60_000;
 const AUTO_TRAFFIC_INTERVAL_MS = 2600;
 
+// "Fully provisioned" inventory depth per link. Utilization measures how
+// well-stocked links are against this target (mean of min(have,target)/target),
+// so thin/long links naturally pull the aggregate below 100% with real variance.
+const TARGET_DEPTH = 8;
+
 const NODE_TIER = new Map(NODES.map((n) => [n.node_id, n.tier]));
 // Extension-tier links decohere a bit faster (longer, lossier inter-city fiber).
 const EXTENSION_LINKS = new Set(
@@ -220,10 +225,17 @@ class DemoSim {
   private snapshot(now: number): void {
     const availablePairs = [...this.pairs.values()].filter((p) => p.status === "AVAILABLE");
     const live = availablePairs.length;
-    // Utilization = link coverage (matches the engine): fraction of physical
-    // links currently carrying usable inventory.
-    const covered = new Set<string>();
-    for (const p of availablePairs) if (p.link_id) covered.add(p.link_id);
+    // Utilization = mean link provisioning vs. a target inventory depth. A link
+    // with >= TARGET_DEPTH usable pairs counts as fully provisioned (1.0); thin
+    // links contribute proportionally, so the aggregate sits believably below
+    // 100% and dips when links run dry (droughts / injected failures).
+    const perLink = new Map<string, number>();
+    for (const p of availablePairs) {
+      if (p.link_id) perLink.set(p.link_id, (perLink.get(p.link_id) ?? 0) + 1);
+    }
+    const utilization =
+      LINKS.reduce((a, l) => a + Math.min(perLink.get(l.link_id) ?? 0, TARGET_DEPTH) / TARGET_DEPTH, 0) /
+      LINKS.length;
     const avgDelivered =
       this.fulfilledTotal > 0 ? this.deliveredSum / this.fulfilledTotal : 0;
     this.metrics.push({
@@ -233,7 +245,7 @@ class DemoSim {
       failed_total: this.failedTotal,
       avg_delivered_fidelity: Number(avgDelivered.toFixed(4)),
       live_pair_count: live,
-      utilization: Number((covered.size / LINKS.length).toFixed(4)),
+      utilization: Number(utilization.toFixed(4)),
     });
     if (this.metrics.length > MAX_METRICS) this.metrics.splice(0, this.metrics.length - MAX_METRICS);
   }

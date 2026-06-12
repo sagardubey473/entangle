@@ -106,9 +106,9 @@ export function StatTiles({ h }: { h: Headline }) {
       />
       <Tile
         icon={<Activity className="h-4 w-4" />}
-        label="Repeater utilization"
-        subcaption="how busy the swap nodes are"
-        info="Share of physical links currently carrying usable entangled-pair inventory."
+        label="Link provisioning"
+        subcaption="how well-stocked the links are vs. target"
+        info="Mean inventory depth across links against a per-link provisioning target; thin, long, or failed links pull it below 100%."
         value={h.utilization}
         decimals={0}
         suffix="%"

@@ -368,14 +368,20 @@ export class EntangleEngine {
 
   buildMetrics(now: number): MetricsSnapshot {
     const live = this.livePairs.size;
-    // Utilization = link coverage: fraction of physical links currently carrying
-    // usable inventory. Drops when links decohere or are failed; a meaningful
-    // health signal (vs. raw slot occupancy, which pins at 100%).
-    const coveredLinks = new Set<string>();
+    // Utilization = mean link provisioning vs. a target inventory depth (a link
+    // with >= TARGET_DEPTH usable pairs is fully provisioned). Thin links
+    // contribute proportionally, so this sits believably below 100% and dips
+    // when links decohere or are failed.
+    const TARGET_DEPTH = 8;
+    const perLink = new Map<string, number>();
     for (const p of this.livePairs.values()) {
-      if (p.status === "AVAILABLE" && p.link_id) coveredLinks.add(p.link_id);
+      if (p.status === "AVAILABLE" && p.link_id) {
+        perLink.set(p.link_id, (perLink.get(p.link_id) ?? 0) + 1);
+      }
     }
-    const utilization = coveredLinks.size / LINKS.length;
+    const utilization =
+      LINKS.reduce((a, l) => a + Math.min(perLink.get(l.link_id) ?? 0, TARGET_DEPTH) / TARGET_DEPTH, 0) /
+      LINKS.length;
     const avgDelivered =
       this.fulfilledTotal > 0
         ? this.deliveredFidelitySum / this.fulfilledTotal

@@ -72,6 +72,206 @@ function fidelityColor(f: number) {
 
 const edgeKey = (a: string, b: string) => [a, b].sort().join("|");
 
+// ---------------------------------------------------------------------------
+// Label / chip geometry (deterministic, no randomness)
+// ---------------------------------------------------------------------------
+
+interface Rect { x: number; y: number; w: number; h: number } // top-left anchored
+interface Pt { x: number; y: number }
+
+/** Approximate rendered chip width/height for a label string. */
+function labelSize(text: string): { w: number; h: number } {
+  return { w: Math.max(28, text.length * 6.2 + 14), h: 20 };
+}
+function chipSize(text: string, isDst: boolean): { w: number; h: number } {
+  return isDst
+    ? { w: text.length * 6.6 + 18, h: 22 }
+    : { w: text.length * 6.0 + 12, h: 17 };
+}
+function rectFromCenter(cx: number, cy: number, w: number, h: number): Rect {
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+function rectsOverlap(a: Rect, b: Rect, pad = 2): boolean {
+  return (
+    a.x - pad < b.x + b.w &&
+    a.x + a.w + pad > b.x &&
+    a.y - pad < b.y + b.h &&
+    a.y + a.h + pad > b.y
+  );
+}
+function overlapArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+/** Keep a chip/label fully inside the viewBox (small margin). */
+function clampCenter(cx: number, cy: number, w: number, h: number): Pt {
+  return {
+    x: Math.min(VIEW.w - 4 - w / 2, Math.max(4 + w / 2, cx)),
+    y: Math.min(VIEW.h - 4 - h / 2, Math.max(4 + h / 2, cy)),
+  };
+}
+
+// The dense Long Island / NYC testbed cluster whose labels must be deconflicted.
+const CLUSTER = new Set(["bnl", "sbu", "commack", "westbury", "nyc", "columbia", "yale"]);
+
+interface LabelBox { cx: number; cy: number; w: number; h: number }
+
+/**
+ * Deterministic label declutter: seed each label (manual nudge, else radially
+ * away from the cluster centroid, else above the node), then iteratively push
+ * overlapping label rects apart and off foreign node markers, capping how far a
+ * label can drift and clamping to the viewBox. Produces real non-overlapping
+ * positions at the current projection rather than relying on hand-guessed dx/dy.
+ */
+function computeLabelLayout(
+  shown: Array<{ id: string; label: string; p: Pt; seed?: { dx: number; dy: number } }>,
+  markers: Array<{ id: string; p: Pt }>,
+): Map<string, LabelBox> {
+  const cl = shown.filter((s) => CLUSTER.has(s.id));
+  const cx0 = cl.reduce((a, s) => a + s.p.x, 0) / (cl.length || 1);
+  const cy0 = cl.reduce((a, s) => a + s.p.y, 0) / (cl.length || 1);
+
+  const items = shown.map((s) => {
+    const size = labelSize(s.label);
+    let c: Pt;
+    if (s.seed) {
+      c = { x: s.p.x + s.seed.dx, y: s.p.y + s.seed.dy };
+    } else if (CLUSTER.has(s.id)) {
+      const vx = s.p.x - cx0;
+      const vy = s.p.y - cy0;
+      const m = Math.hypot(vx, vy) || 1;
+      c = { x: s.p.x + (vx / m) * 30, y: s.p.y + (vy / m) * 30 };
+    } else {
+      c = { x: s.p.x, y: s.p.y - 20 };
+    }
+    return { id: s.id, node: s.p, size, c };
+  });
+
+  const MAXDISP = 64;
+  for (let iter = 0; iter < 80; iter++) {
+    // pairwise separation
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const ri = rectFromCenter(items[i].c.x, items[i].c.y, items[i].size.w, items[i].size.h);
+        const rj = rectFromCenter(items[j].c.x, items[j].c.y, items[j].size.w, items[j].size.h);
+        if (!rectsOverlap(ri, rj, 3)) continue;
+        let dx = items[i].c.x - items[j].c.x;
+        let dy = items[i].c.y - items[j].c.y;
+        if (dx === 0 && dy === 0) {
+          dx = i < j ? 1 : -1;
+          dy = 0.5;
+        }
+        const m = Math.hypot(dx, dy) || 1;
+        items[i].c.x += (dx / m) * 2;
+        items[i].c.y += (dy / m) * 2;
+        items[j].c.x -= (dx / m) * 2;
+        items[j].c.y -= (dy / m) * 2;
+      }
+    }
+    // push labels off foreign node markers, cap drift, clamp
+    for (const it of items) {
+      const r = rectFromCenter(it.c.x, it.c.y, it.size.w, it.size.h);
+      for (const mk of markers) {
+        if (mk.p.x === it.node.x && mk.p.y === it.node.y) continue;
+        const mr: Rect = { x: mk.p.x - 7, y: mk.p.y - 7, w: 14, h: 14 };
+        if (!rectsOverlap(r, mr, 1)) continue;
+        let dx = it.c.x - mk.p.x;
+        let dy = it.c.y - mk.p.y;
+        if (dx === 0 && dy === 0) {
+          dx = 1;
+          dy = -1;
+        }
+        const mm = Math.hypot(dx, dy) || 1;
+        it.c.x += (dx / mm) * 2;
+        it.c.y += (dy / mm) * 2;
+      }
+      const vx = it.c.x - it.node.x;
+      const vy = it.c.y - it.node.y;
+      const dd = Math.hypot(vx, vy);
+      if (dd > MAXDISP) {
+        it.c.x = it.node.x + (vx / dd) * MAXDISP;
+        it.c.y = it.node.y + (vy / dd) * MAXDISP;
+      }
+      const cc = clampCenter(it.c.x, it.c.y, it.size.w, it.size.h);
+      it.c.x = cc.x;
+      it.c.y = cc.y;
+    }
+  }
+  return new Map(items.map((it) => [it.id, { cx: it.c.x, cy: it.c.y, w: it.size.w, h: it.size.h }]));
+}
+
+/** First non-overlapping slot around an anchor, or null if all collide. */
+function placeChip(anchor: Pt, size: { w: number; h: number }, occupied: Rect[]): Rect | null {
+  const s = size;
+  const slots: Pt[] = [
+    { x: 0, y: -(s.h / 2 + 10) }, // above
+    { x: 0, y: s.h / 2 + 10 }, //    below
+    { x: s.w / 2 + 12, y: 0 }, //    right
+    { x: -(s.w / 2 + 12), y: 0 }, // left
+    { x: s.w / 2 + 10, y: -(s.h / 2 + 8) }, // up-right
+    { x: -(s.w / 2 + 10), y: -(s.h / 2 + 8) }, // up-left
+    { x: s.w / 2 + 10, y: s.h / 2 + 8 }, //      down-right
+    { x: -(s.w / 2 + 10), y: s.h / 2 + 8 }, //   down-left
+  ];
+  for (const slot of slots) {
+    const c = clampCenter(anchor.x + slot.x, anchor.y + slot.y, s.w, s.h);
+    const r = rectFromCenter(c.x, c.y, s.w, s.h);
+    if (!occupied.some((o) => rectsOverlap(r, o, 2))) return r;
+  }
+  return null;
+}
+/**
+ * Destination-chip placement: try slots at growing radius until one is clear, so
+ * the centerpiece chip escapes even a dense cluster without overlapping a label.
+ * Falls back to least-overlap only if nothing is ever free.
+ */
+function placeChipEscalating(anchor: Pt, size: { w: number; h: number }, occupied: Rect[]): Rect {
+  for (const f of [1, 1.6, 2.3, 3.2]) {
+    const ox = (size.w / 2 + 12) * f;
+    const oy = (size.h / 2 + 10) * f;
+    const slots: Pt[] = [
+      { x: 0, y: oy }, //   below (toward open water for the LI cluster)
+      { x: 0, y: -oy }, //  above
+      { x: ox, y: 0 }, //   right
+      { x: -ox, y: 0 }, //  left
+      { x: ox * 0.8, y: oy * 0.8 },
+      { x: -ox * 0.8, y: oy * 0.8 },
+      { x: ox * 0.8, y: -oy * 0.8 },
+      { x: -ox * 0.8, y: -oy * 0.8 },
+    ];
+    for (const slot of slots) {
+      const c = clampCenter(anchor.x + slot.x, anchor.y + slot.y, size.w, size.h);
+      const r = rectFromCenter(c.x, c.y, size.w, size.h);
+      if (!occupied.some((o) => rectsOverlap(r, o, 2))) return r;
+    }
+  }
+  return placeChipForced(anchor, size, occupied);
+}
+
+/** Least-overlap slot — final fallback if no clear slot exists anywhere. */
+function placeChipForced(anchor: Pt, size: { w: number; h: number }, occupied: Rect[]): Rect {
+  const s = size;
+  const slots: Pt[] = [
+    { x: 0, y: -(s.h / 2 + 10) },
+    { x: s.w / 2 + 12, y: 0 },
+    { x: 0, y: s.h / 2 + 10 },
+    { x: -(s.w / 2 + 12), y: 0 },
+  ];
+  let best: Rect | null = null;
+  let bestArea = Infinity;
+  for (const slot of slots) {
+    const c = clampCenter(anchor.x + slot.x, anchor.y + slot.y, s.w, s.h);
+    const r = rectFromCenter(c.x, c.y, s.w, s.h);
+    const area = occupied.reduce((a, o) => a + overlapArea(r, o), 0);
+    if (area < bestArea) {
+      bestArea = area;
+      best = r;
+    }
+  }
+  return best!;
+}
+
 export function QuantumCorridorMap({
   nodes,
   links,
@@ -192,8 +392,60 @@ export function QuantumCorridorMap({
     (labelMode === "endpoints" && n.kind === "endpoint") ||
     hovered === n.id;
 
-  const labelCenter = (n: NetworkNode, p: { x: number; y: number }) =>
-    n.labelOffset ? { x: p.x + n.labelOffset.dx, y: p.y + n.labelOffset.dy } : { x: p.x, y: p.y - 22 };
+  // Deterministic, non-overlapping positions for the always-on (endpoint)
+  // labels — derived from the real projection, not hand-guessed offsets.
+  const labelLayout = useMemo(() => {
+    const shown = nodes
+      .filter((n) => n.kind === "endpoint" && projected.get(n.id))
+      .map((n) => ({ id: n.id, label: n.label, p: projected.get(n.id)!, seed: n.labelOffset }));
+    const markers = nodes
+      .filter((n) => projected.get(n.id))
+      .map((n) => ({ id: n.id, p: projected.get(n.id)! }));
+    return computeLabelLayout(shown, markers);
+  }, [nodes, projected]);
+
+  const labelBoxFor = (n: NetworkNode, p: Pt): LabelBox => {
+    const found = labelLayout.get(n.id);
+    if (found) return found;
+    const size = labelSize(n.label);
+    return { cx: p.x, cy: p.y - 20, w: size.w, h: size.h };
+  };
+
+  // Collision-aware route fidelity-chip placement (destination first, then
+  // intermediates; intermediates drop rather than overlap a label or chip).
+  const routeChips = useMemo(() => {
+    if (!route) return null;
+    const lastIdx = route.path.length - 1;
+    const dstId = route.path[lastIdx];
+    // The destination's own label is hidden during the route, so the chip may use
+    // its space; every OTHER label is an obstacle.
+    const occupied: Rect[] = [];
+    labelLayout.forEach((L, id) => {
+      if (id !== dstId) occupied.push(rectFromCenter(L.cx, L.cy, L.w, L.h));
+    });
+    const placements = new Map<number, { rect: Rect; text: string; isDst: boolean }>();
+    const pDst = projected.get(dstId);
+    if (pDst) {
+      const text = `delivered F=${route.delivered.toFixed(2)}`;
+      const size = chipSize(text, true);
+      const rect = placeChipEscalating(pDst, size, occupied);
+      placements.set(lastIdx, { rect, text, isDst: true });
+      occupied.push(rect);
+    }
+    for (let i = 1; i < lastIdx; i++) {
+      const f = route.hopFids[i - 1];
+      if (Number.isNaN(f)) continue;
+      const p = projected.get(route.path[i]);
+      if (!p) continue;
+      const text = `×${f.toFixed(2)}`;
+      const size = chipSize(text, false);
+      const rect = placeChip(p, size, occupied);
+      if (!rect) continue;
+      placements.set(i, { rect, text, isDst: false });
+      occupied.push(rect);
+    }
+    return placements;
+  }, [route, labelLayout, projected]);
 
   // Real Northeast US state outlines, projected with the same fn as the nodes.
   const landPaths = useMemo(() => {
@@ -369,15 +621,19 @@ export function QuantumCorridorMap({
           {nodes.map((n) => {
             const p = projected.get(n.id);
             if (!p || !showLabel(n)) return null;
-            const c = labelCenter(n, p);
-            const dist = Math.hypot(c.x - p.x, c.y - p.y);
-            const dim = routeActive && !activePath.includes(n.id) ? 0.3 : 1;
+            // The destination's own label is replaced by its "delivered F" chip.
+            if (routeActive && activePath[activePath.length - 1] === n.id) return null;
+            const box = labelBoxFor(n, p);
+            const dist = Math.hypot(box.cx - p.x, box.cy - p.y);
+            // During a route hold, dim non-path labels harder so chips read clearly.
+            const onPath = activePath.includes(n.id);
+            const dim = routeActive ? (onPath ? 0.5 : 0.2) : 1;
             return (
               <g key={`label-${n.id}`} className="pointer-events-none" style={{ opacity: dim }}>
                 {dist > 14 && (
-                  <line x1={p.x} y1={p.y} x2={c.x} y2={c.y} stroke="#9CA3AF" strokeWidth={0.75} opacity={0.6} />
+                  <line x1={p.x} y1={p.y} x2={box.cx} y2={box.cy} stroke="#9CA3AF" strokeWidth={0.75} opacity={0.6} />
                 )}
-                <foreignObject x={c.x - 60} y={c.y - 12} width={120} height={24}>
+                <foreignObject x={box.cx - box.w / 2} y={box.cy - box.h / 2} width={box.w} height={box.h}>
                   <div className="flex h-full items-center justify-center">
                     <span className="whitespace-nowrap rounded-md border border-[#E5E7EB] bg-white/95 px-1.5 py-0.5 text-[11px] font-medium text-[#111827] shadow-sm">
                       {n.label}
@@ -432,32 +688,44 @@ export function QuantumCorridorMap({
                     transition={{ duration: 0.7, delay, ease: "easeOut" }}
                   />
                   <circle cx={p.x} cy={p.y} r={isDst ? 5.5 : 4.5} fill={COLOR.route} />
-                  {i > 0 && (isDst || !Number.isNaN(route.hopFids[i - 1])) && (
+                </g>
+              );
+            })}
+            {/* collision-aware fidelity chips (precomputed, no overlap) */}
+            {routeChips &&
+              [...routeChips.entries()].map(([i, chip]) => {
+                const p = projected.get(route.path[i]);
+                if (!p) return null;
+                const delay = reducedMotion ? 0 : i * 0.35;
+                const ccx = chip.rect.x + chip.rect.w / 2;
+                const ccy = chip.rect.y + chip.rect.h / 2;
+                return (
+                  <g key={`chip-${i}`}>
+                    {Math.hypot(ccx - p.x, ccy - p.y) > 16 && (
+                      <line x1={p.x} y1={p.y} x2={ccx} y2={ccy} stroke={COLOR.route} strokeWidth={0.75} opacity={0.5} />
+                    )}
                     <motion.g
                       initial={reducedMotion ? { opacity: 1 } : { opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: delay + 0.05, duration: 0.3 }}
                     >
-                      <foreignObject x={p.x - 44} y={p.y + (isDst ? 8 : -28)} width={88} height={22}>
+                      <foreignObject x={chip.rect.x} y={chip.rect.y} width={chip.rect.w} height={chip.rect.h}>
                         <div className="flex h-full items-center justify-center">
                           <span
                             className={`whitespace-nowrap rounded-md px-1.5 py-0.5 font-semibold shadow-sm ${
-                              isDst
+                              chip.isDst
                                 ? "bg-[#4F46E5] text-[12px] text-white"
-                                : "border border-[#E5E7EB] bg-white text-[10px] text-[#4F46E5]"
+                                : "border border-[#E5E7EB] bg-white/95 text-[9px] text-[#4F46E5]"
                             }`}
                           >
-                            {isDst
-                              ? `delivered F=${route.delivered.toFixed(2)}`
-                              : `×${(route.hopFids[i - 1] ?? 0).toFixed(2)}`}
+                            {chip.text}
                           </span>
                         </div>
                       </foreignObject>
                     </motion.g>
-                  )}
-                </g>
-              );
-            })}
+                  </g>
+                );
+              })}
           </g>
         )}
       </svg>
